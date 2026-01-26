@@ -191,6 +191,10 @@ export const useDeviceStore = defineStore('device', {
       await this.apiAction<void>('Polaris:SetAlignment', `{"azimuth": ${az}, "altitude": ${alt}}`)
     },
 
+    async alpacaStopDriver() {
+      await this.apiAction<void>('Polaris:StopDriver')
+    },
+
     async bleSelectDevice(name:string) {
       await this.apiAction<void>('Polaris:bleSelectDevice', `{"name": "${name}"}`)
     },
@@ -220,6 +224,10 @@ export const useDeviceStore = defineStore('device', {
 
     async alpacaTrackOrbital(name:string, c1:DsoType) {
       await this.apiAction<void>('Polaris:TrackOrbital', `{"name": "${name}", "category":${c1}}`)
+    },
+
+    async alpacaPanoSlew(target:number) {
+      await this.apiAction<void>('Polaris:PanoSlew', `{"panel": ${target}, "isasync":true}`)
     },
 
     async catalogFetch() {

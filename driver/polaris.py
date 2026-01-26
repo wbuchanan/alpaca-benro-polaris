@@ -415,7 +415,7 @@ class Polaris:
         try:
             if self._writer:
                 if self._writer.transport.is_closing():
-                    self.logger.warning("Writer transport is closing — skipping drain")
+                    self.logger.debug("Writer transport is closing — skipping drain")
                     return
                 self._writer.write(msg.encode())
                 await asyncio.wait_for(self._writer.drain(), timeout=2.0)
@@ -761,7 +761,7 @@ class Polaris:
             q1 = Quaternion(arg_dict['w1'], arg_dict['x1'], arg_dict['y1'], arg_dict['z1'])
             p_az = float(arg_dict['compass'])   # from Polaris direct
             p_alt = -float(arg_dict['alt'])     # from Polaris direct
-            q_t1, q_t2, q_t3, q_az, q_alt, q_roll = quaternion_to_angles(q1, azhint=p_az)
+            q_t1, q_t2, q_t3, q_az, q_alt, q_roll = quaternion_to_angles(q1)
             q_ra, q_dec = self.altaz2radec(q_alt, q_az)
             theta_meas = np.array([q_t1, q_t2, q_t3])
             self._history.append([dt_now, q_t1, q_t2, q_t3])          # deque collection, so it automatically throws away stuff older than 6 samples ago
@@ -798,7 +798,7 @@ class Polaris:
                 q1_state, theta_state = q1, theta_meas
 
             # update all the ASCOM values and the PID loop
-            delta_state, alpha_state, theta_state = self.update_ascom_from_new_q1_adj(q1_state, azhint=p_az)
+            delta_state, alpha_state, theta_state = self.update_ascom_from_new_q1_adj(q1_state)
             self._pid.measure(delta_state, alpha_state, theta_state, self._zeta_meas)
 
 
@@ -907,13 +907,13 @@ class Polaris:
 
 
 
-    def update_ascom_from_new_q1_adj(self, q1_state, azhint):
+    def update_ascom_from_new_q1_adj(self, q1_state):
         # default to the ASCOM az,alt,roll values based on a q1 state
-        a_t1, a_t2, a_t3, a_az, a_alt, a_roll = quaternion_to_angles(q1_state, azhint=azhint)
+        a_t1, a_t2, a_t3, a_az, a_alt, a_roll = quaternion_to_angles(q1_state)
 
         # Correct the ASCOM az,alt,roll values with the Multi-Point QUEST optimal adj and re-grab
         if Config.advanced_alignment and Config.advanced_control:        
-            _, _, _, a_az, a_alt, a_roll = quaternion_to_angles(self._sm.q1_adj * q1_state, azhint=azhint)
+            _, _, _, a_az, a_alt, a_roll = quaternion_to_angles(self._sm.q1_adj * q1_state)
 
         # Correct the ASCOM roll value with the Rotator adj
         if Config.advanced_rotator and Config.advanced_control:         
@@ -2251,3 +2251,105 @@ class Polaris:
         await asyncio.sleep(1)
         await self.send_cmd_park()
 
+
+    async def slew_to_panel(self, target, isasync:bool=False) -> None:
+        new_panel = target
+        if target is None:
+            current = getattr(Config, "panel", 0)
+            rows = getattr(Config, "rows", 1)
+            cols = getattr(Config, "cols", 3)
+            total_panels = rows * cols
+            new_panel = current + 1 if current<total_panels else 1
+        az, alt = self.get_panel_altaz(new_panel)
+        Config.apply_changes({"panel": new_panel})
+        self.logger.info(f'SlewToPanel: Panel {new_panel} - Az {az:.2f}, Alt {alt:.2f}')
+        if Config.track == 0:            # Landscape - Untracked
+            await self.stop_tracking()
+            self._pid.set_alpha_target({ "roll": Config.r3 })
+            await self.SlewToAltAz(alt, az, isasync)
+        elif Config.track == 1:            # Sky - Horizon Locked
+            self._pid.set_alpha_target({ "roll": 0 })
+            await self.SlewToAltAz(alt, az, isasync)
+            await self.start_tracking()
+        elif Config.track == 2:            # Sky - Celestrial
+            await self.SlewToAltAz(alt, az, isasync)
+            await self.start_tracking()
+
+
+    def get_panel_altaz(self, panel: int) -> tuple[float, float]:
+        """
+        Calculate Az/Alt coordinates for a given panel number in the mosaic,
+        including boresight roll rotation.
+
+        Grid convention:
+        - Row 0 = bottom
+        - Column 0 = left
+        - Roll applies to the entire mosaic
+        """
+        rows = getattr(Config, "rows", 1)
+        cols = getattr(Config, "cols", 3)
+        hstep = getattr(Config, "hstep", 40.0)
+        vstep = getattr(Config, "vstep", 25.0)
+        order = getattr(Config, "order", 0)
+        anchor = getattr(Config, "anchor", 0)
+        ref_az = getattr(Config, "r1", 0.0)
+        ref_alt = getattr(Config, "r2", 0.0)
+        ref_roll = getattr(Config, "r3", 0.0)  # degrees
+
+        total_panels = rows * cols
+        if panel < 1 or panel > total_panels:
+            raise ValueError(f"Panel {panel} is out of range (1-{total_panels})")
+        
+        # --- Force anchor to 0 if out of bounds ---
+        if anchor < 0 or anchor > total_panels:
+            anchor = 0  # default to center panel if invalid
+
+        # --- Build grid (row 0 = bottom, col 0 = left) ---
+        grid = [[0 for _ in range(cols)] for _ in range(rows)]
+        n = 1
+        if order == 0:  # row-major
+            for r in range(rows):
+                for c in range(cols):
+                    grid[r][c] = n
+                    n += 1
+        elif order == 1:  # column-major
+            for c in range(cols):
+                for r in range(rows):
+                    grid[r][c] = n
+                    n += 1
+        else:  # serpentine
+            for r in range(rows):
+                cs = list(range(cols))
+                if r % 2 == 1:
+                    cs.reverse()
+                for c in cs:
+                    grid[r][c] = n
+                    n += 1
+
+        def find_panel(target: int) -> tuple[float, float]:
+            if target == 0:
+                return (rows - 1) / 2, (cols - 1) / 2
+            for r, row in enumerate(grid):
+                for c, val in enumerate(row):
+                    if val == target:
+                        return r, c
+            raise ValueError(f"Panel {target} not found in grid")
+
+        # --- Panel positions ---
+        panel_row, panel_col = find_panel(panel)
+        ref_row, ref_col = find_panel(anchor)
+
+        # --- Grid-space deltas ---
+        dx = (panel_col - ref_col) * hstep   # right
+        dy = (panel_row - ref_row) * vstep   # up
+
+        # --- Apply boresight roll ---
+        roll_rad = math.radians(ref_roll)
+        dx_r = dx * math.cos(roll_rad) - dy * math.sin(roll_rad)
+        dy_r = dx * math.sin(roll_rad) + dy * math.cos(roll_rad)
+
+        # --- Final Az/Alt ---
+        az = ref_az + dx_r
+        alt = ref_alt + dy_r
+
+        return az, alt
