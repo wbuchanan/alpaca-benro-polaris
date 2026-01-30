@@ -59,6 +59,7 @@ export const useConfigStore = defineStore('config', {
     r2: 5,
     r3: 0,
     panel: 0,
+    startingpanel: 'br',
 
     // Advanced Features
     verbose_driver_exceptions: true,

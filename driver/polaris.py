@@ -1365,7 +1365,7 @@ class Polaris:
         self.lifecycle.reset()
 
 
-    async def moveaxis_speed_measurement(self, axis, rate, required_stable_samples = 5, initial_interval = 3.0, max_interval = 15, sampling_interval = 0.25):
+    async def moveaxis_speed_measurement(self, axis, rate, required_stable_samples = 3, initial_interval = 3.0, max_interval = 10, sampling_interval = 0.25):
         start_time = time.monotonic()
         stable_tolerance = 0.05 if rate > 5 else 0.002
         await asyncio.sleep(initial_interval)
@@ -1393,9 +1393,9 @@ class Polaris:
                     break
         # exited while without a value in tollerance
         else:
-            measured_dps = rate_dps  # fallback to the controller's rate
+            measured_dps = float(np.mean(window)) if rate>0 else 0 # rate_dps  # fallback to the controller's rate
             status = "HIGH STDEV"
-            self.logger.info(f'== TEST == **UNSTABLE** on Axis {axis} |  RAW {rate_raw} | stdev: {stdev:.7f}, last 5 of {len(omega_samples)}')
+            self.logger.info(f'== TEST == **UNSTABLE** on Axis {axis} |  RAW {rate_raw} | DPS: {measured_dps: .5f}, stdev: {stdev:.7f}, last 5 of {len(omega_samples)}')
         return abs(measured_dps), abs(rate_raw), stdev, status
 
 
@@ -2295,6 +2295,7 @@ class Polaris:
         ref_az = getattr(Config, "r1", 0.0)
         ref_alt = getattr(Config, "r2", 0.0)
         ref_roll = getattr(Config, "r3", 0.0)  # degrees
+        startpos = getattr(Config, "startingpanel", "br")
 
         total_panels = rows * cols
         if panel < 1 or panel > total_panels:
@@ -2340,8 +2341,10 @@ class Polaris:
         ref_row, ref_col = find_panel(anchor)
 
         # --- Grid-space deltas ---
-        dx = (panel_col - ref_col) * hstep   # right
-        dy = (panel_row - ref_row) * vstep   # up
+        # Move right if starting from the left of the grid, otherwise move left
+        dx = (panel_col - ref_col) * hstep if startpos[1] == 'l' else (ref_col - panel_col) * hstep * -1  
+        # Move up if starting from the bottom, otherwise move down
+        dy = (panel_row - ref_row) * vstep if startpos[0] == 'b' else (ref_row - panel_row) * vstep * -1
 
         # --- Apply boresight roll ---
         roll_rad = math.radians(ref_roll)

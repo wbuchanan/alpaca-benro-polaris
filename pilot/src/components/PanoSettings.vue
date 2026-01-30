@@ -15,14 +15,19 @@
         </div>
         <div class="row q-col-gutter-lg  items-center q-pt-lg">
             <q-select
-              class="col-6 q-pt-none" label="Panel Order" emit-value map-options
+              class="col-3 q-pt-none" label="Panel Order" emit-value map-options
               v-model="cfg.order" @update:model-value="v => putdb({ order: v })"
               :options="panoOrderOptions"
             />
             <q-select
-              class="col-6 q-pt-none" label="Orientation and Tracking" emit-value map-options
+              class="col-5 q-pt-none" label="Orientation and Tracking" emit-value map-options
               v-model="cfg.track" @update:model-value="v => putdb({ track: v })"
               :options="panoTrackingOptions"
+            />
+            <q-select
+              class="col-4 q-pt-none" label="Starting Panel" emit-value map-options
+              v-model="cfg.startingpanel" @update:model-value="v => putdb({ startingpanel: v })"
+              :options="panoStartingPanelOptions"
             />
         </div>
         <div class="text-h6 q-pt-lg">Panorama Grid Positioning</div>
@@ -101,6 +106,12 @@ const panoOrderOptions = [
   { label: 'Serpentine', value: 2 },
 ]
 
+const panoStartingPanelOptions = [
+  { label: 'Top Left', value: "tl" },
+  { label: 'Top Right', value: "tr" },
+  { label: 'Bottom Left', value: "bl" },
+  { label: 'Bottom Right', value: "br" },
+]
 
 const panoRefTypeOptions = [
   { label: 'Az/Alt Point', value: 0 },
